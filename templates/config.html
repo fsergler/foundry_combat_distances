@@ -1,0 +1,26 @@
+<form>
+    <div id="combat-distances-list">
+        {{#each ranges as |range id|}}
+        <div class="ring-entry" data-ring-id="{{id}}">
+            <div class="form-group">
+                <div class="form-fields">
+                    <input type="text" name="{{id}}.label" value="{{range.label}}" placeholder="Label"/>
+                    <input type="number" name="{{id}}.distance" value="{{range.distance}}" placeholder="Distance"/>
+                    <input type="color" name="{{id}}.color" value="{{range.color}}" title="Ring Color"/>
+                    <button type="button" class="remove-ring">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        {{/each}}
+    </div>
+    <div class="form-group">
+        <button type="button" id="add-ring">
+            <i class="fas fa-plus"></i> Add Distance
+        </button>
+    </div>
+    <button type="submit">
+        <i class="fas fa-save"></i> Save Changes
+    </button>
+</form>
