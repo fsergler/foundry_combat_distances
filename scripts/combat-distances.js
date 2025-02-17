@@ -177,7 +177,9 @@ class CombatDistances {
             // Add label
             const label = document.createElement('span');
             label.classList.add('range-label');
-            label.textContent = `${rangeData.label} (${rangeData.distance}')`;
+            // Always format the distance to 1 decimal place
+            const formattedDistance = rangeData.distance.toFixed(1);
+            label.textContent = `${rangeData.label} (${formattedDistance}')`;
             ring.appendChild(label);
 
             return ring;
@@ -295,6 +297,11 @@ class CombatDistancesConfig extends FormApplication {
             ? this.constructor.DEFAULTS.ranges 
             : savedRanges;
         
+        // Format all distances to show one decimal place
+        Object.values(ranges).forEach(range => {
+            range.distance = parseFloat(range.distance).toFixed(1);
+        });
+        
         return {
             ranges: ranges
         };
@@ -304,27 +311,27 @@ class CombatDistancesConfig extends FormApplication {
         return {
             ranges: {
                 ring1: {
-                    distance: 2,
+                    distance: 2.0,  // Updated to show intention of decimal
                     label: "Close",
                     color: "#ff0000" // Red
                 },
                 ring2: {
-                    distance: 4,
+                    distance: 4.0,
                     label: "Short",
                     color: "#ffa500" // Orange
                 },
                 ring3: {
-                    distance: 6,
+                    distance: 6.0,
                     label: "Medium",
                     color: "#ffff00" // Yellow
                 },
                 ring4: {
-                    distance: 8,
+                    distance: 8.0,
                     label: "Long",
                     color: "#90ee90" // Light green
                 },
                 ring5: {
-                    distance: 10,
+                    distance: 10.0,
                     label: "Extreme",
                     color: "#00ff00" // Green
                 }
@@ -354,7 +361,7 @@ class CombatDistancesConfig extends FormApplication {
                 <div class="form-group">
                     <div class="form-fields">
                         <input type="text" name="ring${ringCount}.label" placeholder="Label"/>
-                        <input type="number" name="ring${ringCount}.distance" placeholder="Distance"/>
+                        <input type="number" name="ring${ringCount}.distance" placeholder="Distance" step="0.1" value="${(ringCount * 2).toFixed(1)}"/>
                         <input type="color" name="ring${ringCount}.color" value="${defaultColor}" title="Ring Color"/>
                         <button type="button" class="remove-ring">
                             <i class="fas fa-trash"></i>
@@ -367,7 +374,6 @@ class CombatDistancesConfig extends FormApplication {
         ringsList.append(newRing);
         newRing.find('.remove-ring').click(this._onRemoveRing.bind(this));
         
-        // Add this at the end
         this._onResize();
     }
 
@@ -389,7 +395,6 @@ class CombatDistancesConfig extends FormApplication {
             });
         });
         
-        // Add this at the end
         this._onResize();
     }
 
@@ -410,9 +415,12 @@ class CombatDistancesConfig extends FormApplication {
         
         entries.each((index, entry) => {
             const ringId = $(entry).attr('data-ring-id');
+            const distance = Math.max(0, parseFloat(formData[`${ringId}.distance`]) || (index + 1) * 2);
+            
             ranges[ringId] = {
                 label: formData[`${ringId}.label`] || `Ring ${index + 1}`,
-                distance: Math.max(0, parseInt(formData[`${ringId}.distance`]) || (index + 1) * 2),
+                // Store the distance as a number but ensure it has 1 decimal place for display
+                distance: parseFloat(distance.toFixed(1)),
                 color: formData[`${ringId}.color`] || (index < 5 
                     ? this.constructor.DEFAULTS.ranges[`ring${index + 1}`]?.color 
                     : '#000000')
