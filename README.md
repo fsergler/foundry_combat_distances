@@ -6,7 +6,7 @@ Foundry VTT module that displays configurable combat distances around tokens for
 
 - Adds a toggle button to the token HUD for displaying combat distances
 - Fully configurable combat distances with customizable:
-  - Distances
+  - Distances (supports decimal values)
   - Labels
   - Colors
 - Dynamic ring updates when tokens move
@@ -30,7 +30,7 @@ Foundry VTT module that displays configurable combat distances around tokens for
    - Remove existing rings using the trash can icon
    - Modify ring properties:
      - Label: The name of the range (e.g., "Close", "Medium", "Far")
-     - Distance: The range in feet/units
+     - Distance: The range in feet/units (supports decimal values like 2.5 or 7.5)
      - Color: The color of the ring
 
 ## Support
