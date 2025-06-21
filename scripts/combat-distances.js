@@ -119,7 +119,7 @@ class CombatDistances {
             }
         });
 
-        html.find('div.left').append(button);
+         $(html).find('div.left').append(button);
     }
 
     static createRings(token) {
