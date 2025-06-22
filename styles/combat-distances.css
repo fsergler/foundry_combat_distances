@@ -62,6 +62,7 @@
     border: 1px solid #000;
     border-radius: 5px;
     cursor: pointer;
+    padding-top: 0;
 }
 
 .control-icon[title="Toggle Combat Distances"].active {
@@ -81,36 +82,85 @@
     flex-direction: column;
 }
 
+#combat-distances-config .window-content {
+    padding: 10px;
+}
+
 #combat-distances-config form {
+    /* Use a simple flexbox layout for the form. */
     display: flex;
     flex-direction: column;
-    height: 100%;
+    height: 100%; /* Ensure the form takes up the full height of the window content. */
 }
 
 #combat-distances-config #combat-distances-list {
+    /* This makes the list expand to fill available space and scroll. */
     flex: 1;
-    overflow-y: auto;  /* Enable scrolling if content exceeds height */
+    overflow-y: auto;
+    padding-right: 5px; /* Space for scrollbar */
     margin-bottom: 10px;
-    padding-right: 5px;  /* Space for scrollbar */
 }
 
-#combat-distances-config .form-group:last-child {
-    margin-top: auto;  /* Push save button to bottom */
+#combat-distances-config .form-footer {
+    /* The footer will now stay at the bottom without complex grid/flex properties. */
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border-light-primary);
+    display: flex;
+    gap: 5px;
 }
 
-/* Ensure buttons stay visible */
-#combat-distances-config #add-ring,
-#combat-distances-config button[type="submit"] {
-    position: sticky;
-    bottom: 0;
-    background-color: var(--color-bg);  /* Match your theme's background color */
+#combat-distances-config .form-group {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 5px;
+    border: 1px solid var(--color-border-light-tertiary);
     padding: 5px;
-    margin-bottom: 0;
+    border-radius: 3px;
 }
 
-/* Add some padding to prevent content from being cut off at the bottom */
-#combat-distances-config .window-content {
-    padding-bottom: 10px;
+#combat-distances-config .form-fields {
+    display: flex;
+    flex-direction: column; /* Stack children vertically */
+    align-items: stretch; /* Make children fill the width */
+    gap: 5px;
+}
+
+.form-fields-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+}
+
+.form-fields-inline {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+}
+
+#combat-distances-config .form-fields input[type="text"],
+#combat-distances-config .form-fields input[type="number"] {
+    width: 100%;
+}
+
+#combat-distances-config .form-fields-row input[type="text"] {
+    flex: 3; /* Give more space to the label */
+}
+
+#combat-distances-config .form-fields-row input[type="number"] {
+    flex: 2; /* Give less space to the distance */
+}
+
+#combat-distances-config .form-fields-inline input[type="color"] {
+    flex: 0 1 50px;
+    min-width: 50px;
+    height: 28px;
+    padding: 0 2px;
+}
+
+#combat-distances-config .form-fields-inline .remove-ring {
+    flex: 0 0 auto;
 }
 
 /* Label Styles */
