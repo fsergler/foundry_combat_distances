@@ -18,9 +18,6 @@
   "styles": [
     "styles/combat-distances.css"
   ],
-  "templates": [
-    "templates/config.html"
-  ],
   "url": "https://github.com/fsergler/foundry_combat_distances",
   "manifest": "https://raw.githubusercontent.com/fsergler/Foundry_combat_distances/main/module.json",
   "download": "https://github.com/fsergler/Foundry_combat_distances/releases/download/v1.0.1/module.zip"
