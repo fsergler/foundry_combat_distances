@@ -32,6 +32,9 @@ class CombatDistances {
     };
 
     static initialize() {
+        // Pre-load templates
+        loadTemplates([`modules/${this.ID}/templates/config.html`]);
+        
         // Register settings first
         this.registerSettings();
         
