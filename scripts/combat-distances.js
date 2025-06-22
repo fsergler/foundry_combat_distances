@@ -50,12 +50,19 @@ class CombatDistances {
             default: this.DEFAULTS.ranges,
             onChange: () => {
                 // Refresh all existing rings when settings change
-                canvas.tokens.placeables.forEach(token => {
-                    if (this.hasRings(token.id)) {
-                        this.removeRings(token.id);
-                        this.createRings(token);
+                // Only do this if canvas and tokens are available and we're not in the middle of a reset
+                try {
+                    if (canvas && canvas.tokens && canvas.tokens.placeables && canvas.ready) {
+                        canvas.tokens.placeables.forEach(token => {
+                            if (this.hasRings(token.id)) {
+                                this.removeRings(token.id);
+                                this.createRings(token);
+                            }
+                        });
                     }
-                });
+                } catch (error) {
+                    console.warn('CombatDistances: Error in onChange handler:', error);
+                }
             }
         });
 
@@ -65,16 +72,6 @@ class CombatDistances {
             hint: 'Configure the distances for each combat range',
             icon: 'fas fa-circle-dot',
             type: CombatDistancesConfig,
-            restricted: true
-        });
-
-        // Add the reset button
-        game.settings.registerMenu(this.ID, 'resetDefaults', {
-            name: 'Reset to Defaults',
-            label: 'Reset to Defaults',
-            hint: 'Reset all combat ranges to their default values',
-            icon: 'fas fa-undo',
-            type: CombatDistancesReset,
             restricted: true
         });
     }
@@ -119,7 +116,7 @@ class CombatDistances {
             }
         });
 
-        html.find('div.left').append(button);
+        $(html).find('div.left').append(button);
     }
 
     static createRings(token) {
@@ -165,20 +162,24 @@ class CombatDistances {
             }
             
             // Convert hex color to rgba
-            if (color.startsWith('#')) {
+            if (color && color.startsWith('#')) {
                 const r = parseInt(color.slice(1, 3), 16);
                 const g = parseInt(color.slice(3, 5), 16);
                 const b = parseInt(color.slice(5, 7), 16);
                 ring.style.borderColor = `rgba(${r}, ${g}, ${b}, 0.5)`;
-            } else {
+            } else if (color) {
                 ring.style.borderColor = color.replace(')', ', 0.5)').replace('rgb', 'rgba');
+            } else {
+                // Final fallback to black if color is still null/undefined
+                ring.style.borderColor = 'rgba(0, 0, 0, 0.5)';
             }
 
             // Add label
             const label = document.createElement('span');
             label.classList.add('range-label');
-            // Always format the distance to 1 decimal place
-            const formattedDistance = rangeData.distance.toFixed(1);
+            // Always format the distance to 1 decimal place, ensuring it's a number first
+            const distance = parseFloat(rangeData.distance) || 0;
+            const formattedDistance = distance.toFixed(1);
             label.textContent = `${rangeData.label} (${formattedDistance}')`;
             ring.appendChild(label);
 
@@ -246,62 +247,64 @@ class CombatDistances {
 }
 
 // Add the configuration form
-class CombatDistancesConfig extends FormApplication {
+class CombatDistancesConfig extends foundry.applications.api.ApplicationV2 {
     static get defaultOptions() {
-        return mergeObject(super.defaultOptions, {
+        return foundry.utils.mergeObject(super.defaultOptions, {
             title: 'Combat Distances Configuration',
             id: 'combat-distances-config',
             template: `modules/${CombatDistances.ID}/templates/config.html`,
             width: 400,
-            height: 'auto',
+            height: 500,
             resizable: true,  // Allow manual resizing
             minimizable: true,
             closeOnSubmit: true
         });
     }
 
-    // Add this method to handle dynamic resizing
-    setPosition(options = {}) {
-        // Get the current position
-        const position = super.setPosition(options);
-        
-        // Get the window and content elements
-        const window = this.element[0];
-        const content = window.querySelector('.window-content');
-        
-        // Calculate the content height
-        const contentHeight = content.scrollHeight;
-        
-        // Set a minimum height of 200px and maximum of 80vh
-        const maxHeight = Math.floor(window.ownerDocument.defaultView.innerHeight * 0.8);
-        const newHeight = Math.min(Math.max(contentHeight + 50, 200), maxHeight);
-        
-        // Update the height if it's different
-        if (newHeight !== position.height) {
-            position.height = newHeight;
-            this.element.css({height: newHeight});
+    constructor(options) {
+        super(options);
+        this._debouncedRender = foundry.utils.debounce(this.render.bind(this), 100);
+    }
+
+    // Required V2 Application methods
+    async _renderHTML(data) {
+        const templatePath = `modules/${CombatDistances.ID}/templates/config.html`;
+        const html = await foundry.applications.handlebars.renderTemplate(templatePath, data);
+        return html;
+    }
+
+    _replaceHTML(element, html) {
+        // In V2 Application framework, the parameters are swapped:
+        // element = the HTML content (string)
+        // html = the DOM element to replace
+        if (typeof element === 'string' && html && html.innerHTML !== undefined) {
+            // element is the HTML content, html is the DOM element
+            html.innerHTML = element;
+        } else if (typeof html === 'string' && element && element.innerHTML !== undefined) {
+            // html is the HTML content, element is the DOM element
+            element.innerHTML = html;
+        } else {
+            // Fallback: try to set innerHTML on the application's main element
+            if (this.element && this.element[0]) {
+                this.element[0].innerHTML = typeof element === 'string' ? element : html;
+            }
         }
-        
-        return position;
     }
 
-    // Add this method to handle resizing when rings are added/removed
-    _onResize() {
-        this.setPosition();
-    }
-
-    getData(options={}) {
+    async _prepareContext(options) {
         // For the config form, we still want to merge with defaults for new installations
         const savedRanges = game.settings.get(CombatDistances.ID, 'ranges');
-        const ranges = Object.keys(savedRanges).length === 0 
-            ? this.constructor.DEFAULTS.ranges 
+        const ranges = Object.keys(savedRanges).length === 0
+            ? this.constructor.DEFAULTS.ranges
             : savedRanges;
-        
-        // Format all distances to show one decimal place
+
+        // Ensure all distances are numbers and add display formatting
         Object.values(ranges).forEach(range => {
-            range.distance = parseFloat(range.distance).toFixed(1);
+            const distance = parseFloat(range.distance) || 0;
+            range.distance = distance; // Keep as number
+            range.distanceDisplay = distance.toFixed(1); // Add display property
         });
-        
+
         return {
             ranges: ranges
         };
@@ -339,67 +342,120 @@ class CombatDistancesConfig extends FormApplication {
         };
     }
 
-    activateListeners(html) {
-        super.activateListeners(html);
+    async render(force, options) {
+        console.log("CombatDistancesConfig: render() called.");
+        try {
+            await super.render(force, options);
+            console.log("CombatDistancesConfig: super.render() completed successfully.");
+            
+            // Set up event listeners after render is complete with a small delay
+            setTimeout(() => {
+                this._setupEventListeners();
+            }, 100);
+        } catch(e) {
+            console.error("CombatDistancesConfig: An error occurred during the render process.", e);
+        }
+        return this;
+    }
 
-        html.find('#add-ring').click(this._onAddRing.bind(this));
-        html.find('.remove-ring').click(this._onRemoveRing.bind(this));
+    _setupEventListeners() {
+        console.log('CombatDistancesConfig: Setting up event listeners');
+        
+        if (!this.element) {
+            console.error('CombatDistancesConfig: No element found');
+            return;
+        }
+
+        // Ensure we have a jQuery object
+        const $element = $(this.element);
+        console.log('CombatDistancesConfig: Element type:', typeof this.element, this.element);
+        
+        const addButton = $element.find('#add-ring');
+        const removeButtons = $element.find('.remove-ring');
+        const form = $element.find('form');
+        const resetButton = $element.find('#reset-defaults');
+        
+        console.log('CombatDistancesConfig: Found elements:', {
+            addButton: addButton.length,
+            removeButtons: removeButtons.length,
+            form: form.length,
+            resetButton: resetButton.length
+        });
+
+        // Remove any existing listeners first
+        addButton.off('click');
+        removeButtons.off('click');
+        form.off('submit');
+        resetButton.off('click');
+
+        // Add new listeners
+        addButton.on('click', this._onAddRing.bind(this));
+        removeButtons.on('click', this._onRemoveRing.bind(this));
+        form.on('submit', this._onSubmit.bind(this));
+        resetButton.on('click', this._onResetDefaults.bind(this));
+        
+        console.log('CombatDistancesConfig: Event listeners attached');
+    }
+
+    _onSubmit(event) {
+        event.preventDefault();
+        const formData = new FormData(event.target);
+        const data = Object.fromEntries(formData);
+        this._updateObject(event, data);
     }
 
     _onAddRing(event) {
+        console.log('CombatDistancesConfig: _onAddRing called');
         event.preventDefault();
-        const ringsList = this.element.find('#combat-distances-list');
+        const $element = $(this.element);
+        const ringsList = $element.find('#combat-distances-list');
         const ringCount = ringsList.children().length + 1;
         
-        // Set default color to black for rings after the first 5
-        const defaultColor = ringCount <= 5 
-            ? this.constructor.DEFAULTS.ranges[`ring${ringCount}`]?.color || '#000000'
-            : '#000000';
+        console.log('CombatDistancesConfig: Adding ring', ringCount);
         
         const newRing = $(`
             <div class="ring-entry" data-ring-id="ring${ringCount}">
                 <div class="form-group">
                     <div class="form-fields">
-                        <input type="text" name="ring${ringCount}.label" placeholder="Label"/>
-                        <input type="number" name="ring${ringCount}.distance" placeholder="Distance" step="0.1" value="${(ringCount * 2).toFixed(1)}"/>
-                        <input type="color" name="ring${ringCount}.color" value="${defaultColor}" title="Ring Color"/>
-                        <button type="button" class="remove-ring">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        <div class="form-fields-row">
+                            <input type="text" name="ring${ringCount}.label" placeholder="Label"/>
+                            <input type="number" name="ring${ringCount}.distance" placeholder="Distance" step="0.1" value="0.0"/>
+                        </div>
+                        <div class="form-fields-inline">
+                            <input type="color" name="ring${ringCount}.color" value="#000000" title="Ring Color"/>
+                            <button type="button" class="remove-ring">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
         `);
 
         ringsList.append(newRing);
-        newRing.find('.remove-ring').click(this._onRemoveRing.bind(this));
         
-        this._onResize();
+        // Re-setup all event listeners to include the new remove button
+        this._setupEventListeners();
+        
+        console.log('CombatDistancesConfig: Ring added successfully');
     }
 
     _onRemoveRing(event) {
+        console.log('CombatDistancesConfig: _onRemoveRing called');
         event.preventDefault();
         const ringEntry = $(event.currentTarget).closest('.ring-entry');
         ringEntry.remove();
         this._reorderRings();
         
-        // Immediately save the changes
-        const formData = this._getSubmitData();
-        this._updateObject(event, formData).then(() => {
-            // After saving, refresh all tokens that have rings
-            canvas.tokens.placeables.forEach(token => {
-                if (CombatDistances.hasRings(token.id)) {
-                    CombatDistances.removeRings(token.id);
-                    CombatDistances.createRings(token);
-                }
-            });
-        });
+        // Re-setup event listeners after removing and reordering
+        this._setupEventListeners();
         
-        this._onResize();
+        console.log('CombatDistancesConfig: Ring removed successfully');
     }
 
     _reorderRings() {
-        const rings = this.element.find('.ring-entry');
+        const $element = $(this.element);
+        const rings = $element.find('.ring-entry');
         rings.each((index, ring) => {
             const newId = `ring${index + 1}`;
             $(ring).attr('data-ring-id', newId);
@@ -409,9 +465,23 @@ class CombatDistancesConfig extends FormApplication {
         });
     }
 
+    _getSubmitData() {
+        const $element = $(this.element);
+        const formData = {};
+        $element.find('input').each((index, input) => {
+            const name = input.name;
+            const value = input.value;
+            if (name) {
+                formData[name] = value;
+            }
+        });
+        return formData;
+    }
+
     async _updateObject(event, formData) {
+        const $element = $(this.element);
         const ranges = {};
-        const entries = this.element.find('.ring-entry');
+        const entries = $element.find('.ring-entry');
         
         entries.each((index, entry) => {
             const ringId = $(entry).attr('data-ring-id');
@@ -430,39 +500,40 @@ class CombatDistancesConfig extends FormApplication {
         await game.settings.set(CombatDistances.ID, 'ranges', ranges);
         ui.notifications.info('Combat distance settings have been updated.');
     }
-}
 
-// Add this new class after the CombatDistancesConfig class
-class CombatDistancesReset extends FormApplication {
-    static get defaultOptions() {
-        return mergeObject(super.defaultOptions, {
-            title: 'Reset Combat Distances',
-            id: 'combat-distances-reset',
-            template: `modules/${CombatDistances.ID}/templates/reset.html`,
-            width: 400,
-            height: 'auto',
-            classes: ['dialog'],
-            closeOnSubmit: true
+    async _onResetDefaults(event) {
+        event.preventDefault();
+        const configApp = this;
+
+        // Use the modern V2 Dialog.confirm API for a clean, Yes/No confirmation.
+        const confirmed = await foundry.applications.api.Dialog.confirm({
+            title: "Reset Combat Distances",
+            content: `<p>Are you sure you want to reset all combat distances to their default values? This cannot be undone.</p>`,
+            yes: {
+                label: "Yes",
+                callback: () => true
+            },
+            no: {
+                label: "No",
+                callback: () => false
+            },
+            default: "no"
         });
-    }
 
-    async _updateObject(event, formData) {
-        await game.settings.set(CombatDistances.ID, 'ranges', CombatDistances.DEFAULTS.ranges);
-        ui.notifications.info('Combat distances have been reset to default values.');
-        
-        // Refresh all existing rings
-        canvas.tokens.placeables.forEach(token => {
-            if (CombatDistances.hasRings(token.id)) {
-                CombatDistances.removeRings(token.id);
-                CombatDistances.createRings(token);
+        if (confirmed) {
+            console.log('CombatDistancesConfig: Resetting to default values');
+            try {
+                const defaultRanges = foundry.utils.deepClone(CombatDistances.DEFAULTS.ranges);
+                await game.settings.set(CombatDistances.ID, 'ranges', defaultRanges);
+                ui.notifications.info('Combat distances have been reset to default values.');
+                
+                // Re-render the main config window to reflect the changes.
+                configApp.render();
+            } catch (error) {
+                console.error('Error resetting combat distances:', error);
+                ui.notifications.error('Failed to reset combat distances. Please try again.');
             }
-        });
-    }
-
-    activateListeners(html) {
-        super.activateListeners(html);
-        
-        html.find('button[name="cancel"]').click(this.close.bind(this));
+        }
     }
 }
 

@@ -4,23 +4,31 @@
         <div class="ring-entry" data-ring-id="{{id}}">
             <div class="form-group">
                 <div class="form-fields">
-                    <input type="text" name="{{id}}.label" value="{{range.label}}" placeholder="Label"/>
-                    <input type="number" name="{{id}}.distance" value="{{range.distance}}" step="0.1" min="0" placeholder="Distance"/>
-                    <input type="color" name="{{id}}.color" value="{{range.color}}" title="Ring Color"/>
-                    <button type="button" class="remove-ring">
-                        <i class="fas fa-trash"></i>
-                    </button>
+                    <div class="form-fields-row">
+                        <input type="text" name="{{id}}.label" value="{{range.label}}" placeholder="Label"/>
+                        <input type="number" name="{{id}}.distance" value="{{range.distanceDisplay}}" step="0.1" min="0" placeholder="Distance"/>
+                    </div>
+                    <div class="form-fields-inline">
+                        <input type="color" name="{{id}}.color" value="{{range.color}}" title="Ring Color"/>
+                        <button type="button" class="remove-ring">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
         {{/each}}
     </div>
-    <div class="form-group">
+    <div class="form-footer">
         <button type="button" id="add-ring">
             <i class="fas fa-plus"></i> Add Distance
         </button>
+        <div style="flex-grow: 1;"></div>
+        <button type="button" id="reset-defaults">
+            <i class="fas fa-undo"></i> Reset Defaults
+        </button>
+        <button type="submit">
+            <i class="fas fa-save"></i> Save Changes
+        </button>
     </div>
-    <button type="submit">
-        <i class="fas fa-save"></i> Save Changes
-    </button>
 </form>
