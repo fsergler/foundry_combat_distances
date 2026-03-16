@@ -34,13 +34,39 @@ class CombatDistances {
     static initialize() {
         // Pre-load templates
         loadTemplates([`modules/${this.ID}/templates/config.html`]);
-        
+
         // Register settings first
         this.registerSettings();
-        
+        this.registerKeybindings();
+
         Hooks.on('renderTokenHUD', this.onRenderTokenHUD.bind(this));
         Hooks.on('updateToken', this.onUpdateToken.bind(this));
         Hooks.on('deleteToken', this.onDeleteToken.bind(this));
+    }
+
+    static registerKeybindings() {
+        game.keybindings.register(this.ID, 'toggleRings', {
+            name: 'Toggle Combat Distances',
+            hint: 'Toggle combat distance rings on the selected token(s)',
+            editable: [{ key: 'KeyG', modifiers: ['Control'] }],
+            onDown: () => {
+                const controlled = canvas.tokens?.controlled ?? [];
+                if (controlled.length === 0) return;
+                const currentRanges = game.settings.get(this.ID, 'ranges');
+                if (Object.keys(currentRanges).length === 0) {
+                    ui.notifications.warn('No combat distances are configured. Please configure distances in the module settings.');
+                    return;
+                }
+                for (const token of controlled) {
+                    if (this.hasRings(token.id)) {
+                        this.removeRings(token.id);
+                    } else {
+                        this.createRings(token);
+                    }
+                }
+            },
+            precedence: CONST.KEYBINDING_PRECEDENCE.NORMAL
+        });
     }
 
     static registerSettings() {
