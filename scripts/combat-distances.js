@@ -42,6 +42,7 @@ class CombatDistances {
         Hooks.on('renderTokenHUD', this.onRenderTokenHUD.bind(this));
         Hooks.on('updateToken', this.onUpdateToken.bind(this));
         Hooks.on('deleteToken', this.onDeleteToken.bind(this));
+        Hooks.on('renderSettingsConfig', this.onRenderSettingsConfig.bind(this));
     }
 
     static registerKeybindings() {
@@ -95,14 +96,34 @@ class CombatDistances {
             }
         });
 
-        game.settings.registerMenu(this.ID, 'rangeConfig', {
-            name: 'Configure Combat Ranges',
-            label: 'Configure Combat Ranges',
-            hint: 'Configure the distances for each combat range',
-            icon: 'fas fa-circle-dot',
-            type: CombatDistancesConfig,
-            restricted: true
+        game.settings.register(this.ID, 'gridShading', {
+            name: 'Grid Cell Shading',
+            hint: 'Highlight grid cells within each combat distance band. "Full cells only" shades cells entirely inside a ring\'s radius. "Include partial" also shades cells the ring edge passes through.',
+            scope: 'world',
+            config: true,
+            type: String,
+            choices: {
+                'none': 'None',
+                'full': 'Full cells only',
+                'partial': 'Include partial cells'
+            },
+            default: 'none',
+            onChange: () => {
+                try {
+                    if (canvas && canvas.tokens && canvas.tokens.placeables && canvas.ready) {
+                        canvas.tokens.placeables.forEach(token => {
+                            if (this.hasRings(token.id)) {
+                                this.removeRings(token.id);
+                                this.createRings(token);
+                            }
+                        });
+                    }
+                } catch (error) {
+                    console.warn('CombatDistances: Error in gridShading onChange handler:', error);
+                }
+            }
         });
+
     }
 
     // Update the ranges getter to only use current settings
@@ -165,7 +186,18 @@ class CombatDistances {
 
         this.removeRings(token.id);
 
-        const rings = Object.entries(this.ranges).map(([rangeKey, rangeData], index) => {
+        const sortedEntries = Object.entries(this.ranges).sort(([, a], [, b]) => a.distance - b.distance);
+        const shadingMode = game.settings.get(this.ID, 'gridShading');
+
+        // Append fill cells first so they render beneath the ring circles
+        if (shadingMode !== 'none') {
+            sortedEntries.forEach(([rangeKey, rangeData], index) => {
+                const prevDistance = index > 0 ? sortedEntries[index - 1][1].distance : 0;
+                this.createGridHighlights(token, rangeKey, rangeData, prevDistance, tokenCenter);
+            });
+        }
+
+        const rings = sortedEntries.map(([rangeKey, rangeData], index) => {
             // Convert distance from feet to grid units
             const gridDistance = rangeData.distance / canvas.scene.grid.distance;
             
@@ -226,18 +258,105 @@ class CombatDistances {
         token.document.setFlag(this.ID, 'hasRings', true);
     }
 
+    static createGridHighlights(token, rangeKey, rangeData, prevDistance, center = null) {
+        const mode = game.settings.get(this.ID, 'gridShading');
+        if (mode === 'none') return;
+
+        const gridSize = canvas.grid.size;
+        const gridDistance = canvas.scene.grid.distance;
+        const maxRadiusPx = (rangeData.distance / gridDistance) * gridSize;
+        const prevRadiusPx = (prevDistance / gridDistance) * gridSize;
+
+        const tokenCenter = center ?? {
+            x: token.x + token.w / 2,
+            y: token.y + token.h / 2
+        };
+
+        // Parse ring color to rgba fill
+        const color = rangeData.color || '#000000';
+        let fillColor = 'rgba(0, 0, 0, 0.15)';
+        if (color.startsWith('#')) {
+            const r = parseInt(color.slice(1, 3), 16);
+            const g = parseInt(color.slice(3, 5), 16);
+            const b = parseInt(color.slice(5, 7), 16);
+            fillColor = `rgba(${r}, ${g}, ${b}, 0.15)`;
+        }
+
+        const container = document.getElementById('hud');
+        if (!container) return;
+
+        // canvas.grid.type is the authoritative numeric type (0=gridless, 1=square, 2-5=hex)
+        const isSquare = canvas.grid.type === 1;
+        const maxCells = Math.ceil(maxRadiusPx / gridSize) + 1;
+        const tokenGridPos = canvas.grid.getOffset({ x: tokenCenter.x, y: tokenCenter.y });
+
+        for (let di = -maxCells; di <= maxCells; di++) {
+            for (let dj = -maxCells; dj <= maxCells; dj++) {
+                const cellOffset = { i: tokenGridPos.i + di, j: tokenGridPos.j + dj };
+                const cellPos = canvas.grid.getTopLeftPoint(cellOffset);
+
+                // Get the points to check for this cell
+                let checkPoints;
+                if (isSquare) {
+                    checkPoints = [
+                        { x: cellPos.x,           y: cellPos.y },
+                        { x: cellPos.x + gridSize, y: cellPos.y },
+                        { x: cellPos.x + gridSize, y: cellPos.y + gridSize },
+                        { x: cellPos.x,           y: cellPos.y + gridSize }
+                    ];
+                } else {
+                    // Hex: use center + shape vertices (vertices are relative to cell center)
+                    const hexCenter = canvas.grid.getCenterPoint(cellOffset);
+                    const shape = canvas.grid.getShape();
+                    const pts = shape?.points;
+                    if (pts?.length) {
+                        checkPoints = [];
+                        for (let k = 0; k + 1 < pts.length; k += 2) {
+                            checkPoints.push({ x: hexCenter.x + pts[k], y: hexCenter.y + pts[k + 1] });
+                        }
+                    } else {
+                        // Fallback: approximate hex with 6 points on a circle
+                        const r = gridSize / 2;
+                        checkPoints = Array.from({ length: 6 }, (_, i) => ({
+                            x: hexCenter.x + r * Math.cos(i * Math.PI / 3),
+                            y: hexCenter.y + r * Math.sin(i * Math.PI / 3)
+                        }));
+                    }
+                }
+
+                const dists = checkPoints.map(p => Math.hypot(p.x - tokenCenter.x, p.y - tokenCenter.y));
+
+                const inMaxRing = mode === 'full'
+                    ? dists.every(d => d <= maxRadiusPx)
+                    : dists.some(d => d <= maxRadiusPx);
+                const inPrevRing = prevRadiusPx > 0 && dists.every(d => d <= prevRadiusPx);
+
+                if (inMaxRing && !inPrevRing) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('range-fill-cell', rangeKey);
+                    cell.dataset.tokenId = token.id;
+                    cell.style.left = `${cellPos.x}px`;
+                    cell.style.top = `${cellPos.y}px`;
+                    cell.style.width = `${gridSize}px`;
+                    cell.style.height = `${gridSize}px`;
+                    cell.style.backgroundColor = fillColor;
+                    container.appendChild(cell);
+                }
+            }
+        }
+    }
+
     static removeRings(tokenId) {
         const token = canvas.tokens.get(tokenId);
         if (!token) {
-            // If token doesn't exist, just remove the rings
-            const rings = document.querySelectorAll(`.range-ring[data-token-id="${tokenId}"]`);
-            rings.forEach(ring => ring.remove());
+            document.querySelectorAll(`.range-ring[data-token-id="${tokenId}"], .range-fill-cell[data-token-id="${tokenId}"]`)
+                .forEach(el => el.remove());
             return;
         }
 
-        // Remove only rings associated with this token
-        const rings = document.querySelectorAll(`.range-ring[data-token-id="${tokenId}"]`);
-        rings.forEach(ring => ring.remove());
+        // Remove rings and fill cells associated with this token
+        document.querySelectorAll(`.range-ring[data-token-id="${tokenId}"], .range-fill-cell[data-token-id="${tokenId}"]`)
+            .forEach(el => el.remove());
         
         token.document.setFlag(this.ID, 'hasRings', false);
     }
@@ -250,7 +369,7 @@ class CombatDistances {
     static onUpdateToken(tokenDocument, changes) {
         const token = canvas.tokens.get(tokenDocument.id);
         if (!token || !this.hasRings(token.id)) return;
-        
+
         // Check if position changed
         if ('x' in changes || 'y' in changes) {
             const tokenCenter = {
@@ -258,12 +377,24 @@ class CombatDistances {
                 y: (changes.y ?? token.y) + (token.h / 2)
             };
 
-            // Update only this token's rings positions
+            // Reposition ring circles (fast path — just update CSS)
             const rings = document.querySelectorAll(`.range-ring[data-token-id="${token.id}"]`);
             rings.forEach(ring => {
                 ring.style.left = `${tokenCenter.x}px`;
                 ring.style.top = `${tokenCenter.y}px`;
             });
+
+            // Recreate fill cells (they depend on absolute canvas-grid alignment)
+            document.querySelectorAll(`.range-fill-cell[data-token-id="${token.id}"]`).forEach(el => el.remove());
+            const shadingMode = game.settings.get(this.ID, 'gridShading');
+            if (shadingMode !== 'none') {
+                const sortedEntries = Object.entries(game.settings.get(this.ID, 'ranges'))
+                    .sort(([, a], [, b]) => a.distance - b.distance);
+                sortedEntries.forEach(([rangeKey, rangeData], index) => {
+                    const prevDistance = index > 0 ? sortedEntries[index - 1][1].distance : 0;
+                    this.createGridHighlights(token, rangeKey, rangeData, prevDistance, tokenCenter);
+                });
+            }
         }
     }
 
@@ -273,298 +404,104 @@ class CombatDistances {
         const rings = document.querySelectorAll(`.range-ring[data-token-id="${tokenDocument.id}"]`);
         rings.forEach(ring => ring.remove());
     }
-}
 
-// Add the configuration form
-class CombatDistancesConfig extends foundry.applications.api.ApplicationV2 {
-    static get defaultOptions() {
-        return foundry.utils.mergeObject(super.defaultOptions, {
-            title: 'Combat Distances Configuration',
-            id: 'combat-distances-config',
-            template: `modules/${CombatDistances.ID}/templates/config.html`,
-            width: 400,
-            height: 500,
-            resizable: true,  // Allow manual resizing
-            minimizable: true,
-            closeOnSubmit: true
-        });
-    }
+    // --- Settings panel injection ---
 
-    constructor(options) {
-        super(options);
-        this._debouncedRender = foundry.utils.debounce(this.render.bind(this), 100);
-    }
+    static onRenderSettingsConfig(_app, html) {
+        const root = html instanceof HTMLElement ? html : html[0];
+        // Target the right-panel content section, not the left-panel nav item
+        const moduleSection = root?.querySelector(`section[data-tab="${this.ID}"]`)
+                           ?? root?.querySelector(`.tab[data-tab="${this.ID}"]`);
+        if (!moduleSection) return;
 
-    // Required V2 Application methods
-    async _renderHTML(data) {
-        const templatePath = `modules/${CombatDistances.ID}/templates/config.html`;
-        const html = await foundry.applications.handlebars.renderTemplate(templatePath, data);
-        return html;
-    }
+        const ranges = game.settings.get(this.ID, 'ranges');
+        const sortedEntries = Object.entries(ranges).sort(([, a], [, b]) => a.distance - b.distance);
+        const rowsHTML = sortedEntries.map(([id, range]) => this._ringRowHTML(id, range)).join('');
 
-    _replaceHTML(element, html) {
-        // In V2 Application framework, the parameters are swapped:
-        // element = the HTML content (string)
-        // html = the DOM element to replace
-        if (typeof element === 'string' && html && html.innerHTML !== undefined) {
-            // element is the HTML content, html is the DOM element
-            html.innerHTML = element;
-        } else if (typeof html === 'string' && element && element.innerHTML !== undefined) {
-            // html is the HTML content, element is the DOM element
-            element.innerHTML = html;
-        } else {
-            // Fallback: try to set innerHTML on the application's main element
-            if (this.element && this.element[0]) {
-                this.element[0].innerHTML = typeof element === 'string' ? element : html;
-            }
-        }
-    }
-
-    async _prepareContext(options) {
-        // For the config form, we still want to merge with defaults for new installations
-        const savedRanges = game.settings.get(CombatDistances.ID, 'ranges');
-        const ranges = Object.keys(savedRanges).length === 0
-            ? this.constructor.DEFAULTS.ranges
-            : savedRanges;
-
-        // Ensure all distances are numbers and add display formatting
-        Object.values(ranges).forEach(range => {
-            const distance = parseFloat(range.distance) || 0;
-            range.distance = distance; // Keep as number
-            range.distanceDisplay = distance.toFixed(1); // Add display property
-        });
-
-        return {
-            ranges: ranges
-        };
-    }
-
-    static get DEFAULTS() {
-        return {
-            ranges: {
-                ring1: {
-                    distance: 2.0,  // Updated to show intention of decimal
-                    label: "Close",
-                    color: "#ff0000" // Red
-                },
-                ring2: {
-                    distance: 4.0,
-                    label: "Short",
-                    color: "#ffa500" // Orange
-                },
-                ring3: {
-                    distance: 6.0,
-                    label: "Medium",
-                    color: "#ffff00" // Yellow
-                },
-                ring4: {
-                    distance: 8.0,
-                    label: "Long",
-                    color: "#90ee90" // Light green
-                },
-                ring5: {
-                    distance: 10.0,
-                    label: "Extreme",
-                    color: "#00ff00" // Green
-                }
-            }
-        };
-    }
-
-    async render(force, options) {
-        console.log("CombatDistancesConfig: render() called.");
-        try {
-            await super.render(force, options);
-            console.log("CombatDistancesConfig: super.render() completed successfully.");
-            
-            // Set up event listeners after render is complete with a small delay
-            setTimeout(() => {
-                this._setupEventListeners();
-            }, 100);
-        } catch(e) {
-            console.error("CombatDistancesConfig: An error occurred during the render process.", e);
-        }
-        return this;
-    }
-
-    _setupEventListeners() {
-        console.log('CombatDistancesConfig: Setting up event listeners');
-        
-        if (!this.element) {
-            console.error('CombatDistancesConfig: No element found');
-            return;
-        }
-
-        // Ensure we have a jQuery object
-        const $element = $(this.element);
-        console.log('CombatDistancesConfig: Element type:', typeof this.element, this.element);
-        
-        const addButton = $element.find('#add-ring');
-        const removeButtons = $element.find('.remove-ring');
-        const form = $element.find('form');
-        const resetButton = $element.find('#reset-defaults');
-        
-        console.log('CombatDistancesConfig: Found elements:', {
-            addButton: addButton.length,
-            removeButtons: removeButtons.length,
-            form: form.length,
-            resetButton: resetButton.length
-        });
-
-        // Remove any existing listeners first
-        addButton.off('click');
-        removeButtons.off('click');
-        form.off('submit');
-        resetButton.off('click');
-
-        // Add new listeners
-        addButton.on('click', this._onAddRing.bind(this));
-        removeButtons.on('click', this._onRemoveRing.bind(this));
-        form.on('submit', this._onSubmit.bind(this));
-        resetButton.on('click', this._onResetDefaults.bind(this));
-        
-        console.log('CombatDistancesConfig: Event listeners attached');
-    }
-
-    _onSubmit(event) {
-        event.preventDefault();
-        const formData = new FormData(event.target);
-        const data = Object.fromEntries(formData);
-        this._updateObject(event, data);
-    }
-
-    _onAddRing(event) {
-        console.log('CombatDistancesConfig: _onAddRing called');
-        event.preventDefault();
-        const $element = $(this.element);
-        const ringsList = $element.find('#combat-distances-list');
-        const ringCount = ringsList.children().length + 1;
-        
-        console.log('CombatDistancesConfig: Adding ring', ringCount);
-        
-        const newRing = $(`
-            <div class="ring-entry" data-ring-id="ring${ringCount}">
-                <div class="form-group">
-                    <div class="form-fields">
-                        <div class="form-fields-row">
-                            <input type="text" name="ring${ringCount}.label" placeholder="Label"/>
-                            <input type="number" name="ring${ringCount}.distance" placeholder="Distance" step="0.1" value="0.0"/>
-                        </div>
-                        <div class="form-fields-inline">
-                            <input type="color" name="ring${ringCount}.color" value="#000000" title="Ring Color"/>
-                            <button type="button" class="remove-ring">
-                                <i class="fas fa-trash"></i>
-                            </button>
-                        </div>
-                    </div>
+        moduleSection.insertAdjacentHTML('beforeend', `
+            <div class="form-group stacked" id="cd-ranges-group">
+                <label>Combat Distance Rings</label>
+                <div id="combat-distances-list">${rowsHTML}</div>
+                <div style="display:flex; gap:5px; margin-top:6px;">
+                    <button type="button" id="cd-add-ring">
+                        <i class="fas fa-plus"></i> Add Distance
+                    </button>
+                    <button type="button" id="cd-reset-defaults">
+                        <i class="fas fa-undo"></i> Reset Defaults
+                    </button>
                 </div>
             </div>
         `);
 
-        ringsList.append(newRing);
-        
-        // Re-setup all event listeners to include the new remove button
-        this._setupEventListeners();
-        
-        console.log('CombatDistancesConfig: Ring added successfully');
+        moduleSection.querySelector('#cd-add-ring').addEventListener('click', (e) => {
+            e.preventDefault();
+            const list = moduleSection.querySelector('#combat-distances-list');
+            const count = list.children.length + 1;
+            list.insertAdjacentHTML('beforeend', this._ringRowHTML(`ring${count}`, { label: '', distance: 0, color: '#000000' }));
+            this._attachRemoveListeners(moduleSection);
+        });
+
+        moduleSection.querySelector('#cd-reset-defaults').addEventListener('click', async (e) => {
+            e.preventDefault();
+            const confirmed = await foundry.applications.api.Dialog.confirm({
+                title: 'Reset Combat Distances',
+                content: '<p>Reset all rings to default values? This cannot be undone.</p>',
+                yes: { label: 'Yes', callback: () => true },
+                no: { label: 'No', callback: () => false },
+                default: 'no'
+            });
+            if (!confirmed) return;
+            const list = moduleSection.querySelector('#combat-distances-list');
+            list.innerHTML = Object.entries(this.DEFAULTS.ranges)
+                .map(([id, range]) => this._ringRowHTML(id, range))
+                .join('');
+            this._attachRemoveListeners(moduleSection);
+        });
+
+        this._attachRemoveListeners(moduleSection);
+
+        // Save rings when the settings form is submitted
+        const form = root.closest('form') ?? root.querySelector('form');
+        form?.addEventListener('submit', () => this._saveRangesFromSettingsPanel(moduleSection));
     }
 
-    _onRemoveRing(event) {
-        console.log('CombatDistancesConfig: _onRemoveRing called');
-        event.preventDefault();
-        const ringEntry = $(event.currentTarget).closest('.ring-entry');
-        ringEntry.remove();
-        this._reorderRings();
-        
-        // Re-setup event listeners after removing and reordering
-        this._setupEventListeners();
-        
-        console.log('CombatDistancesConfig: Ring removed successfully');
+    static _ringRowHTML(id, range) {
+        const dist = (parseFloat(range.distance) || 0).toFixed(1);
+        return `
+            <div class="ring-entry" data-ring-id="${id}" style="display:flex; gap:5px; align-items:center; padding:3px 0;">
+                <input type="text"   name="${id}.label"    value="${range.label  ?? ''}"   placeholder="Label"    style="flex:3;" />
+                <input type="number" name="${id}.distance" value="${dist}"                  step="0.1" min="0"    style="flex:2;" />
+                <input type="color"  name="${id}.color"    value="${range.color  ?? '#000000'}"                  style="width:50px; height:28px; flex:0;" />
+                <button type="button" class="remove-ring" style="flex:0;"><i class="fas fa-trash"></i></button>
+            </div>
+        `;
     }
 
-    _reorderRings() {
-        const $element = $(this.element);
-        const rings = $element.find('.ring-entry');
-        rings.each((index, ring) => {
-            const newId = `ring${index + 1}`;
-            $(ring).attr('data-ring-id', newId);
-            $(ring).find('input[type="text"]').attr('name', `${newId}.label`);
-            $(ring).find('input[type="number"]').attr('name', `${newId}.distance`);
-            $(ring).find('input[type="color"]').attr('name', `${newId}.color`);
+    static _attachRemoveListeners(moduleSection) {
+        moduleSection.querySelectorAll('.remove-ring').forEach(btn => {
+            const fresh = btn.cloneNode(true);
+            btn.replaceWith(fresh);
+            fresh.addEventListener('click', (e) => {
+                e.preventDefault();
+                fresh.closest('.ring-entry').remove();
+            });
         });
     }
 
-    _getSubmitData() {
-        const $element = $(this.element);
-        const formData = {};
-        $element.find('input').each((index, input) => {
-            const name = input.name;
-            const value = input.value;
-            if (name) {
-                formData[name] = value;
-            }
-        });
-        return formData;
-    }
-
-    async _updateObject(event, formData) {
-        const $element = $(this.element);
+    static _saveRangesFromSettingsPanel(moduleSection) {
         const ranges = {};
-        const entries = $element.find('.ring-entry');
-        
-        entries.each((index, entry) => {
-            const ringId = $(entry).attr('data-ring-id');
-            const distance = Math.max(0, parseFloat(formData[`${ringId}.distance`]) || (index + 1) * 2);
-            
-            ranges[ringId] = {
-                label: formData[`${ringId}.label`] || `Ring ${index + 1}`,
-                // Store the distance as a number but ensure it has 1 decimal place for display
-                distance: parseFloat(distance.toFixed(1)),
-                color: formData[`${ringId}.color`] || (index < 5 
-                    ? this.constructor.DEFAULTS.ranges[`ring${index + 1}`]?.color 
-                    : '#000000')
+        moduleSection.querySelectorAll('.ring-entry').forEach((entry, index) => {
+            const id = `ring${index + 1}`;
+            ranges[id] = {
+                label:    entry.querySelector('input[type="text"]')?.value?.trim()  || `Ring ${index + 1}`,
+                distance: parseFloat((parseFloat(entry.querySelector('input[type="number"]')?.value) || 0).toFixed(1)),
+                color:    entry.querySelector('input[type="color"]')?.value || '#000000'
             };
         });
-
-        await game.settings.set(CombatDistances.ID, 'ranges', ranges);
-        ui.notifications.info('Combat distance settings have been updated.');
-    }
-
-    async _onResetDefaults(event) {
-        event.preventDefault();
-        const configApp = this;
-
-        // Use the modern V2 Dialog.confirm API for a clean, Yes/No confirmation.
-        const confirmed = await foundry.applications.api.Dialog.confirm({
-            title: "Reset Combat Distances",
-            content: `<p>Are you sure you want to reset all combat distances to their default values? This cannot be undone.</p>`,
-            yes: {
-                label: "Yes",
-                callback: () => true
-            },
-            no: {
-                label: "No",
-                callback: () => false
-            },
-            default: "no"
-        });
-
-        if (confirmed) {
-            console.log('CombatDistancesConfig: Resetting to default values');
-            try {
-                const defaultRanges = foundry.utils.deepClone(CombatDistances.DEFAULTS.ranges);
-                await game.settings.set(CombatDistances.ID, 'ranges', defaultRanges);
-                ui.notifications.info('Combat distances have been reset to default values.');
-                
-                // Re-render the main config window to reflect the changes.
-                configApp.render();
-            } catch (error) {
-                console.error('Error resetting combat distances:', error);
-                ui.notifications.error('Failed to reset combat distances. Please try again.');
-            }
-        }
+        game.settings.set(this.ID, 'ranges', ranges);
     }
 }
+
 
 Hooks.once('init', () => {
     CombatDistances.initialize();

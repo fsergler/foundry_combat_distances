@@ -8,6 +8,11 @@
     z-index: 100;
 }
 
+.range-fill-cell {
+    position: absolute;
+    pointer-events: none;
+}
+
 .range-ring {
     position: absolute;
     border: 2px solid;
