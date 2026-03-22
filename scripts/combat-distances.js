@@ -1,5 +1,6 @@
 class CombatDistances {
     static ID = 'combat-distances';
+    static _activeRings = new Set(); // token IDs with rings visible locally
     
     static DEFAULTS = {
         ranges: {
@@ -43,13 +44,14 @@ class CombatDistances {
         Hooks.on('updateToken', this.onUpdateToken.bind(this));
         Hooks.on('deleteToken', this.onDeleteToken.bind(this));
         Hooks.on('renderSettingsConfig', this.onRenderSettingsConfig.bind(this));
+
     }
 
     static registerKeybindings() {
         game.keybindings.register(this.ID, 'toggleRings', {
             name: 'Toggle Combat Distances',
             hint: 'Toggle combat distance rings on the selected token(s)',
-            editable: [{ key: 'KeyG', modifiers: ['Control'] }],
+            editable: [{ key: 'KeyG', modifiers: [] }],
             onDown: () => {
                 const controlled = canvas.tokens?.controlled ?? [];
                 if (controlled.length === 0) return;
@@ -74,7 +76,7 @@ class CombatDistances {
         game.settings.register(this.ID, 'ranges', {
             name: 'Range Distances',
             hint: 'Set the distance for each combat distance (in feet/units)',
-            scope: 'world',
+            scope: 'client',
             config: false,
             type: Object,
             default: this.DEFAULTS.ranges,
@@ -99,7 +101,7 @@ class CombatDistances {
         game.settings.register(this.ID, 'gridShading', {
             name: 'Grid Cell Shading',
             hint: 'Highlight grid cells within each combat distance band. "Full cells only" shades cells entirely inside a ring\'s radius. "Include partial" also shades cells the ring edge passes through.',
-            scope: 'world',
+            scope: 'client',
             config: true,
             type: String,
             choices: {
@@ -132,7 +134,7 @@ class CombatDistances {
         return game.settings.get(this.ID, 'ranges');
     }
 
-    static onRenderTokenHUD(hud, html, tokenData) {
+    static onRenderTokenHUD(_hud, html, tokenData) {
         const button = $(`
             <div class="control-icon" title="Toggle Combat Distances">
                 <i class="fas fa-circle-dot"></i>
@@ -255,7 +257,7 @@ class CombatDistances {
         }
         
         rings.forEach(ring => container.appendChild(ring));
-        token.document.setFlag(this.ID, 'hasRings', true);
+        this._activeRings.add(token.id);
     }
 
     static createGridHighlights(token, rangeKey, rangeData, prevDistance, center = null) {
@@ -358,12 +360,11 @@ class CombatDistances {
         document.querySelectorAll(`.range-ring[data-token-id="${tokenId}"], .range-fill-cell[data-token-id="${tokenId}"]`)
             .forEach(el => el.remove());
         
-        token.document.setFlag(this.ID, 'hasRings', false);
+        this._activeRings.delete(tokenId);
     }
 
     static hasRings(tokenId) {
-        const token = canvas.tokens.get(tokenId);
-        return token?.document?.getFlag(this.ID, 'hasRings') ?? false;
+        return this._activeRings.has(tokenId);
     }
 
     static onUpdateToken(tokenDocument, changes) {
@@ -403,6 +404,7 @@ class CombatDistances {
         // Use the tokenDocument's ID directly since the token might already be deleted
         const rings = document.querySelectorAll(`.range-ring[data-token-id="${tokenDocument.id}"]`);
         rings.forEach(ring => ring.remove());
+        this._activeRings.delete(tokenDocument.id);
     }
 
     // --- Settings panel injection ---
@@ -463,16 +465,17 @@ class CombatDistances {
         // Save rings when the settings form is submitted
         const form = root.closest('form') ?? root.querySelector('form');
         form?.addEventListener('submit', () => this._saveRangesFromSettingsPanel(moduleSection));
+
     }
 
     static _ringRowHTML(id, range) {
         const dist = (parseFloat(range.distance) || 0).toFixed(1);
         return `
             <div class="ring-entry" data-ring-id="${id}" style="display:flex; gap:5px; align-items:center; padding:3px 0;">
-                <input type="text"   name="${id}.label"    value="${range.label  ?? ''}"   placeholder="Label"    style="flex:3;" />
-                <input type="number" name="${id}.distance" value="${dist}"                  step="0.1" min="0"    style="flex:2;" />
-                <input type="color"  name="${id}.color"    value="${range.color  ?? '#000000'}"                  style="width:50px; height:28px; flex:0;" />
-                <button type="button" class="remove-ring" style="flex:0;"><i class="fas fa-trash"></i></button>
+                <input type="text"   name="${id}.label"    value="${range.label  ?? ''}"   placeholder="Label"    style="flex:4;" />
+                <input type="number" name="${id}.distance" value="${dist}"                  step="0.1" min="0"    style="flex:1;" />
+                <input type="color"  name="${id}.color"    value="${range.color  ?? '#000000'}"                  style="flex: 0 0 80px; height:28px;" />
+                <button type="button" class="remove-ring" style="flex: 0 0 auto;"><i class="fas fa-trash"></i></button>
             </div>
         `;
     }
