@@ -45,6 +45,15 @@ class CombatDistances {
         Hooks.on('deleteToken', this.onDeleteToken.bind(this));
         Hooks.on('renderSettingsConfig', this.onRenderSettingsConfig.bind(this));
 
+        Hooks.once('ready', () => {
+            game.socket.on(`module.${this.ID}`, (data) => {
+                if (data.type !== 'pushSettings') return;
+                if (data.userId !== 'all' && data.userId !== game.user.id) return;
+                game.settings.set(this.ID, 'ranges', data.ranges);
+                game.settings.set(this.ID, 'gridShading', data.gridShading);
+                ui.notifications.info('Your combat distance settings have been updated by the GM.');
+            });
+        });
     }
 
     static registerKeybindings() {
@@ -466,6 +475,38 @@ class CombatDistances {
         const form = root.closest('form') ?? root.querySelector('form');
         form?.addEventListener('submit', () => this._saveRangesFromSettingsPanel(moduleSection));
 
+        // GM-only: push settings to player(s)
+        if (game.user.isGM) {
+            const players = game.users.filter(u => !u.isGM);
+            const playerOptions = players.map(u => `<option value="${u.id}">${u.name}</option>`).join('');
+            moduleSection.insertAdjacentHTML('beforeend', `
+                <div class="form-group" id="cd-gm-push-group">
+                    <label>Push Settings to Player</label>
+                    <div style="display:flex; gap:5px; align-items:center;">
+                        <select id="cd-push-target" style="flex:1;">
+                            <option value="all">All players</option>
+                            ${playerOptions}
+                        </select>
+                        <button type="button" id="cd-push-btn">
+                            <i class="fas fa-share"></i> Push
+                        </button>
+                    </div>
+                    <p class="hint">Overwrite the selected player's ring configuration with your current settings.</p>
+                </div>
+            `);
+
+            moduleSection.querySelector('#cd-push-btn').addEventListener('click', (e) => {
+                e.preventDefault();
+                const userId = moduleSection.querySelector('#cd-push-target').value;
+                game.socket.emit(`module.${this.ID}`, {
+                    type: 'pushSettings',
+                    userId,
+                    ranges: game.settings.get(this.ID, 'ranges'),
+                    gridShading: game.settings.get(this.ID, 'gridShading')
+                });
+                ui.notifications.info(`Combat distance settings pushed to ${userId === 'all' ? 'all players' : game.users.get(userId)?.name}.`);
+            });
+        }
     }
 
     static _ringRowHTML(id, range) {
